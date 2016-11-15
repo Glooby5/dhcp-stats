@@ -13,7 +13,14 @@
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
 #include <err.h>
-
+#include <map>
+#include <string>
+#include <vector>
+#include <cstring>
+#include <iostream>
+#include <string>
+#include <fstream>
+#include <sstream>
 
 #ifdef __linux__            // for Linux
 #include <netinet/ether.h>
@@ -28,19 +35,102 @@
 #define SIZE_ETHERNET (14)       // offset of Ethernet header to L3 protocol
 #define SIZE_UDP        8               /* length of UDP header */
 
+using namespace std;
+
+namespace std {
+    template<typename T>
+    std::string to_string(const T &n) {
+        std::ostringstream s;
+        s << n;
+        return s.str();
+    }
+}
 
 struct udphdr {
-        u_int16_t uh_sport;  /* source port */
-        u_int16_t uh_dport;  /* destination port */
-        u_int16_t uh_ulen;   /* udp length */
-        u_int16_t uh_sum;    /* udp checksum */
-    };
+    u_int16_t uh_sport;  /* source port */
+    u_int16_t uh_dport;  /* destination port */
+    u_int16_t uh_ulen;   /* udp length */
+    u_int16_t uh_sum;    /* udp checksum */
+};
+
+struct device {
+    string address;
+};
+
+struct address {
+    string address;
+    int prefix;
+    string bits;
+    std::vector<device> devices;
+};
 
 
 void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip);
 
 int n = 0;
 int i = 0;
+std::vector<address> addresses;
+
+
+bool isInNetwork(string device, string network, int prefix)
+{
+    cout << device << std::endl;
+    cout << network << std::endl;
+    for (int i = 0; i < prefix; i++) {
+        if (device[i] != network[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+vector<string> split(char* input,const char* delimeter)
+{
+    char* token = strtok(input, delimeter);
+
+    vector<string> result;
+
+    while(token != NULL)
+    {
+        result.push_back(token);
+        token = strtok(NULL,delimeter);
+    }
+
+    return result;
+}
+
+string intToStringBits(int number)
+{
+    string binary  ("");
+    int mask = 1;
+
+    for (int i = 0; i < 8; i++) {
+        if ((mask & number) >= 1) {
+            binary = "1" + binary;
+        } else {
+            binary = "0" + binary;
+        }
+
+        mask <<= 1;
+    }
+
+    return binary;
+}
+
+string ipToStringBits(string input)
+{
+    vector<string> octets = split((char *)input.c_str(), ".");
+    string ipBytes ("");
+
+    for ( auto &i : octets ) {
+        int number = std::stoi(i);
+        string bits = intToStringBits(number);
+        ipBytes.append(bits);
+    }
+
+    return ipBytes;
+}
 
 void mypcap_handler(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
@@ -65,8 +155,8 @@ void mypcap_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
         my_ip = (struct ip *) (packet + SIZE_ETHERNET);        // skip Ethernet header
         size_ip = my_ip->ip_hl * 4;                           // length of IP header
 
-        printf("\tIP: id 0x%x, hlen %d bytes, version %d, total length %d bytes, TTL %d\n", ntohs(my_ip->ip_id),
-               size_ip, my_ip->ip_v, ntohs(my_ip->ip_len), my_ip->ip_ttl);
+        printf("\tIP: id 0x%x, hlen %d bytes, version %d, total length %d bytes, TTL %d\n",
+               ntohs(my_ip->ip_id), size_ip, my_ip->ip_v, ntohs(my_ip->ip_len), my_ip->ip_ttl);
         printf("\tIP src = %s, ", inet_ntoa(my_ip->ip_src));
         printf("IP dst = %s", inet_ntoa(my_ip->ip_dst));
 
@@ -81,17 +171,15 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
     const char *payload;
     int size_payload;
 
-
-    printf(", protocol UDP (%d)\n", my_ip->ip_p);
     my_udp = (struct udphdr *) (packet + SIZE_ETHERNET + size_ip); // pointer to the UDP header
     printf("\tSrc port = %d, dst port = %d, length %d\n", ntohs(my_udp->uh_sport), ntohs(my_udp->uh_dport), ntohs(my_udp->uh_ulen));
 
     payload = (char *) (packet + SIZE_ETHERNET + size_ip + SIZE_UDP);
     size_payload = ntohs(my_ip->ip_len) - (size_ip + SIZE_UDP);
 
-    if (size_payload > ntohs(my_udp->uh_ulen))
+    if (size_payload > ntohs(my_udp->uh_ulen)) {
         size_payload = ntohs(my_udp->uh_ulen);
-
+    }
 
     if (size_payload > 0) {
         printf("   Payload (%d bytes):\n", size_payload);
@@ -100,14 +188,31 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
             printf("%02x:", payload[i]);
 
         }
-        printf("\n");
-        printf("type: %02x", payload[242]);
-        printf("\n\n");
+
+        char type = payload[242];
+
+        if (type == 5) {
+            address *actual;
+            for ( auto &i : addresses ) {
+                cout << "addrs: " << i.address << " " << i.prefix << "\n";
+            }
+        }
     }
 }
 
 
-int main (int argc, char * argv[]) {
+int main (int argc, char * argv[])
+{
+    string ipBits = ipToStringBits("192.168.2.4");
+    string networkBits = ipToStringBits("192.168.1.0");
+
+    if (isInNetwork(ipBits, networkBits, 24)) {
+        cout << "stejna sit\n";
+    } else {
+        cout << "neni stejna\n";
+    }
+
+    return 0;
     char errbuf[PCAP_ERRBUF_SIZE];  // constant defined in pcap.h
     pcap_t *handle;                 // packet capture handle
     char *dev;                      // input device
@@ -118,6 +223,13 @@ int main (int argc, char * argv[]) {
 
     if (argc != 2)
         errx(1,"Usage: %s <pcap filter>", argv[0]);
+
+    address firstAddress;
+    firstAddress.address = "192.168.1.0";
+    firstAddress.prefix = 24;
+    firstAddress.bits = "11000000101010000000000100000000";
+    addresses.push_back(firstAddress);
+    cout << "addrs: " << addresses[0].address << "\n";
 
     // open the device to sniff data
     if ((dev = pcap_lookupdev(errbuf)) == NULL)

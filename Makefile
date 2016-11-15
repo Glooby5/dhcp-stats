@@ -7,7 +7,7 @@ PROGS=$(patsubst %.cpp,%,$(SRC))
 #OBJS = $(SRC:.c=.o)
 
 %: %.cpp
-	$(GCC) $(CFLAGS+) $< $(LIBS) -o $@
+	$(GCC) -std=c++11 $(CFLAGS+) $< $(LIBS) -o $@
 
 all: $(PROGS)
 
