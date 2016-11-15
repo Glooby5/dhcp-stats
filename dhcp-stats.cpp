@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
+#include <math.h>
 
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
@@ -33,7 +34,17 @@
 #endif
 
 #define SIZE_ETHERNET (14)       // offset of Ethernet header to L3 protocol
-#define SIZE_UDP        8               /* length of UDP header */
+#define SIZE_UDP 8               /* length of UDP header */
+#define DHCP_OPTION_TYPE 242
+#define IP_LENGTH 32
+
+// DHCP Messagess
+#define DHCP_DECLINE 4
+#define DHCP_ACK 5
+#define DHCP_NACK 6
+#define DHCP_RELEASE 7
+#define DHCP_INFO 8
+
 
 using namespace std;
 
@@ -69,14 +80,15 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip);
 
 void printStats();
 
-bool hasDeviceInNetwork(string deviceIp, network &network);
+bool hasDeviceInNetwork(string deviceIp, network & myNetwork, int *index);
 
 void requestAck(const ip *my_ip);
+
+void removeDevice(const ip *my_ip);
 
 int n = 0;
 int i = 0;
 std::vector<network> networks;
-
 
 bool isInNetwork(string device, string network, int prefix)
 {
@@ -172,14 +184,25 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
         size_payload = ntohs(my_udp->uh_ulen);
     }
 
-    if (!size_payload) {
+    if (!size_payload || size_payload < DHCP_OPTION_TYPE) {
         return;
     }
 
-    char type = payload[242];
+    char type = payload[DHCP_OPTION_TYPE];
+    printf("Type: %d\n", type);
 
-    if (type == 5) {
-        requestAck(my_ip);
+    switch (type) {
+        case DHCP_ACK:
+        case DHCP_INFO:
+            requestAck(my_ip);
+            break;
+        case DHCP_DECLINE:
+        case DHCP_NACK:
+        case DHCP_RELEASE:
+            removeDevice(my_ip);
+            break;
+        default:
+            break;
     }
 
     printStats();
@@ -195,7 +218,8 @@ void requestAck(const ip *my_ip) {
             continue;
         }
 
-        bool found = hasDeviceInNetwork(deviceIp, i);
+        int index;
+        bool found = hasDeviceInNetwork(deviceIp, i, &index);
 
         if (!found) {
             device newDevice;
@@ -206,11 +230,31 @@ void requestAck(const ip *my_ip) {
     }
 }
 
-bool hasDeviceInNetwork(string deviceIp, network & network) {
-    for (auto &networkDevice : network.devices) {
+void removeDevice(const ip *my_ip) {
+    string deviceIp = inet_ntoa(my_ip->ip_src);
+
+    for ( auto &i : networks ) {
+        int index;
+        bool found = hasDeviceInNetwork(deviceIp, i, &index);
+
+        if (!found) {
+            continue;
+        }
+
+        i.devices.erase(i.devices.begin() + index + 1);
+    }
+}
+
+bool hasDeviceInNetwork(string deviceIp, network & myNetwork, int *index) {
+    *index = 0;
+
+    for (auto &networkDevice : myNetwork.devices) {
+        cout << networkDevice.address << " == " << deviceIp << endl;
         if (networkDevice.address == deviceIp) {
             return true;
         }
+
+        (*index)++;
     }
 
     return false;
@@ -220,7 +264,15 @@ void printStats() {
     cout << endl << "################################################################################" << endl;
 
     for ( auto &network : networks ) {
-        cout << network.address << "/" << network.prefix << endl;
+        double max = pow(2, IP_LENGTH - network.prefix) - 2;
+        cout << network.address << "/" << network.prefix;
+        cout << "      ";
+        cout << max;
+        cout << "      ";
+        cout << network.devices.size();
+        cout << "      ";
+        cout << 100 * network.devices.size() / max << " %";
+        cout << endl;
 
         for (auto &networkDevice : network.devices) {
             cout << networkDevice.address << endl;
@@ -230,6 +282,35 @@ void printStats() {
     cout  << "################################################################################" << endl << endl;
 }
 
+bool parseParameters(int argc, char *argv[])
+{
+    if (argc < 2) {
+        return false;
+    }
+
+    for (int i = 1; i < argc; i++) {
+        vector<string> addressAndPrefix = split(argv[i], "/");
+
+        if (addressAndPrefix.size() != 2) {
+            return false;
+        }
+
+        vector<string> octets = split(addressAndPrefix[0], ".");
+
+        if (octets.size() != 4) {
+            return false;
+        }
+
+        network network;
+        network.prefix = std::stoi(addressAndPrefix[1]);
+        network.address = addressAndPrefix[0];
+        network.bits = ipToStringBits(addressAndPrefix[0]);
+
+        networks.push_back(network);
+    }
+
+    return true;
+}
 
 int main (int argc, char * argv[])
 {
@@ -241,20 +322,12 @@ int main (int argc, char * argv[])
     bpf_u_int32 mask;               // network mask of the input device
     struct bpf_program fp;          // the compiled filter
 
-    network firstAddress;
-    firstAddress.address = "192.168.1.0";
-    firstAddress.prefix = 24;
-    firstAddress.bits = ipToStringBits(firstAddress.address);
-    networks.push_back(firstAddress);
+    if (!parseParameters(argc, argv)) {
+        cout << "spatne parametry" << endl;
+        return EXIT_FAILURE;
+    };
 
-
-    string deviceBits = ipToStringBits("192.168.2.6");
-
-    if (isInNetwork(deviceBits, firstAddress.bits, firstAddress.prefix)) {
-        cout << "stejna" << std::endl;
-    } else {
-        cout << "nestejna" << std::endl;
-    }
+    printStats();
 
     // open the device to sniff data
     if ((dev = pcap_lookupdev(errbuf)) == NULL)
