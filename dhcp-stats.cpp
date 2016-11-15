@@ -57,7 +57,7 @@ struct device {
     string address;
 };
 
-struct address {
+struct network {
     string address;
     int prefix;
     string bits;
@@ -67,15 +67,19 @@ struct address {
 
 void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip);
 
+void printStats();
+
+bool hasDeviceInNetwork(string deviceIp, network &network);
+
+void requestAck(const ip *my_ip);
+
 int n = 0;
 int i = 0;
-std::vector<address> addresses;
+std::vector<network> networks;
 
 
 bool isInNetwork(string device, string network, int prefix)
 {
-    cout << device << std::endl;
-    cout << network << std::endl;
     for (int i = 0; i < prefix; i++) {
         if (device[i] != network[i]) {
             return false;
@@ -85,10 +89,11 @@ bool isInNetwork(string device, string network, int prefix)
     return true;
 }
 
-vector<string> split(char* input,const char* delimeter)
+vector<string> split(string input,const char* delimeter)
 {
-    char* token = strtok(input, delimeter);
-
+    char data[input.length() + 1];
+    memcpy(data, input.c_str(), input.length() + 1);
+    char* token = strtok(data, delimeter);
     vector<string> result;
 
     while(token != NULL)
@@ -120,10 +125,10 @@ string intToStringBits(int number)
 
 string ipToStringBits(string input)
 {
-    vector<string> octets = split((char *)input.c_str(), ".");
+    vector<string> octets = split(input, ".");
     string ipBytes ("");
 
-    for ( auto &i : octets ) {
+    for (auto &i : octets) {
         int number = std::stoi(i);
         string bits = intToStringBits(number);
         ipBytes.append(bits);
@@ -140,25 +145,13 @@ void mypcap_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
     u_int size_ip;
 
     n++;
-    // print the packet header data
-    printf("Packet no. %d:\n",n);
-    printf("\tLength %d, received at %s",header->len,ctime((const time_t*)&header->ts.tv_sec));
-    //    printf("Ethernet address length is %d\n",ETHER_HDR_LEN);
 
     // read the Ethernet header
     eptr = (struct ether_header *) packet;
-    printf("\tSource MAC: %s\n",ether_ntoa((const struct ether_addr *)&eptr->ether_shost)) ;
-    printf("\tDestination MAC: %s\n",ether_ntoa((const struct ether_addr *)&eptr->ether_dhost)) ;
 
     if (ntohs(eptr->ether_type) == ETHERTYPE_IP) {               // see /usr/include/net/ethernet.h for types
-        printf("\tEthernet type is  0x%x, i.e. IP packet \n", ntohs(eptr->ether_type));
         my_ip = (struct ip *) (packet + SIZE_ETHERNET);        // skip Ethernet header
         size_ip = my_ip->ip_hl * 4;                           // length of IP header
-
-        printf("\tIP: id 0x%x, hlen %d bytes, version %d, total length %d bytes, TTL %d\n",
-               ntohs(my_ip->ip_id), size_ip, my_ip->ip_v, ntohs(my_ip->ip_len), my_ip->ip_ttl);
-        printf("\tIP src = %s, ", inet_ntoa(my_ip->ip_src));
-        printf("IP dst = %s", inet_ntoa(my_ip->ip_dst));
 
         if (my_ip->ip_p == 17) {
             analyzePacket(packet, my_ip, size_ip);
@@ -167,13 +160,11 @@ void mypcap_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
 }
 
 void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
-    const struct udphdr *my_udp;    // pointer to the beginning of UDP header
+    const struct udphdr *my_udp;
     const char *payload;
     int size_payload;
 
-    my_udp = (struct udphdr *) (packet + SIZE_ETHERNET + size_ip); // pointer to the UDP header
-    printf("\tSrc port = %d, dst port = %d, length %d\n", ntohs(my_udp->uh_sport), ntohs(my_udp->uh_dport), ntohs(my_udp->uh_ulen));
-
+    my_udp = (struct udphdr *) (packet + SIZE_ETHERNET + size_ip);
     payload = (char *) (packet + SIZE_ETHERNET + size_ip + SIZE_UDP);
     size_payload = ntohs(my_ip->ip_len) - (size_ip + SIZE_UDP);
 
@@ -181,66 +172,100 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
         size_payload = ntohs(my_udp->uh_ulen);
     }
 
-    if (size_payload > 0) {
-        printf("   Payload (%d bytes):\n", size_payload);
+    if (!size_payload) {
+        return;
+    }
 
-        for (i = 0; i < size_payload; i++) {
-            printf("%02x:", payload[i]);
+    char type = payload[242];
 
+    if (type == 5) {
+        requestAck(my_ip);
+    }
+
+    printStats();
+}
+
+void requestAck(const ip *my_ip) {
+    network *actual;
+    string deviceIp = inet_ntoa(my_ip->ip_dst);
+    string deviceBits = ipToStringBits(deviceIp);
+
+    for ( auto &i : networks ) {
+        if (!isInNetwork(deviceBits, i.bits, i.prefix)) {
+            continue;
         }
 
-        char type = payload[242];
+        bool found = hasDeviceInNetwork(deviceIp, i);
 
-        if (type == 5) {
-            address *actual;
-            for ( auto &i : addresses ) {
-                cout << "addrs: " << i.address << " " << i.prefix << "\n";
-            }
+        if (!found) {
+            device newDevice;
+            newDevice.address = deviceIp;
+
+            i.devices.push_back(newDevice);
         }
     }
+}
+
+bool hasDeviceInNetwork(string deviceIp, network & network) {
+    for (auto &networkDevice : network.devices) {
+        if (networkDevice.address == deviceIp) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void printStats() {
+    cout << endl << "################################################################################" << endl;
+
+    for ( auto &network : networks ) {
+        cout << network.address << "/" << network.prefix << endl;
+
+        for (auto &networkDevice : network.devices) {
+            cout << networkDevice.address << endl;
+        }
+    }
+
+    cout  << "################################################################################" << endl << endl;
 }
 
 
 int main (int argc, char * argv[])
 {
-    string ipBits = ipToStringBits("192.168.2.4");
-    string networkBits = ipToStringBits("192.168.1.0");
-
-    if (isInNetwork(ipBits, networkBits, 24)) {
-        cout << "stejna sit\n";
-    } else {
-        cout << "neni stejna\n";
-    }
-
-    return 0;
     char errbuf[PCAP_ERRBUF_SIZE];  // constant defined in pcap.h
     pcap_t *handle;                 // packet capture handle
     char *dev;                      // input device
     struct in_addr a,b;
-    bpf_u_int32 netaddr;            // network address configured at the input device
+    bpf_u_int32 netaddr;            // network network configured at the input device
     bpf_u_int32 mask;               // network mask of the input device
     struct bpf_program fp;          // the compiled filter
 
-    if (argc != 2)
-        errx(1,"Usage: %s <pcap filter>", argv[0]);
-
-    address firstAddress;
+    network firstAddress;
     firstAddress.address = "192.168.1.0";
     firstAddress.prefix = 24;
-    firstAddress.bits = "11000000101010000000000100000000";
-    addresses.push_back(firstAddress);
-    cout << "addrs: " << addresses[0].address << "\n";
+    firstAddress.bits = ipToStringBits(firstAddress.address);
+    networks.push_back(firstAddress);
+
+
+    string deviceBits = ipToStringBits("192.168.2.6");
+
+    if (isInNetwork(deviceBits, firstAddress.bits, firstAddress.prefix)) {
+        cout << "stejna" << std::endl;
+    } else {
+        cout << "nestejna" << std::endl;
+    }
 
     // open the device to sniff data
     if ((dev = pcap_lookupdev(errbuf)) == NULL)
         err(1,"Can't open input device");
 
-    // get IP address and mask of the sniffing interface
+    // get IP network and mask of the sniffing interface
     if (pcap_lookupnet(dev,&netaddr,&mask,errbuf) == -1)
         err(1,"pcap_lookupnet() failed");
 
     a.s_addr=netaddr;
-    printf("Opening interface \"%s\" with net address %s,",dev,inet_ntoa(a));
+    printf("Opening interface \"%s\" with net network %s,",dev,inet_ntoa(a));
     b.s_addr=mask;
     printf("mask %s for listening...\n",inet_ntoa(b));
 
@@ -249,7 +274,7 @@ int main (int argc, char * argv[])
         err(1,"pcap_open_live() failed");
 
     // compile the filter
-    if (pcap_compile(handle,&fp,argv[1],0,netaddr) == -1)
+    if (pcap_compile(handle,&fp,"port 67",0,netaddr) == -1)
         err(1,"pcap_compile() failed");
 
     // set the filter to the packet capture handle
