@@ -35,8 +35,12 @@
 
 #define SIZE_ETHERNET (14)       // offset of Ethernet header to L3 protocol
 #define SIZE_UDP 8               /* length of UDP header */
-#define DHCP_OPTION_TYPE 242
+#define DHCP_OPTIONS_START 240
 #define IP_LENGTH 32
+
+#define DHCP_OPTION_TYPE 53
+#define DHCP_OPTION_LEASE 51
+#define DHCP_OPTION_END 255
 
 // DHCP Messagess
 #define DHCP_DECLINE 4
@@ -45,6 +49,10 @@
 #define DHCP_RELEASE 7
 #define DHCP_INFO 8
 
+
+#define STATE_LOAD 0
+#define STATE_TYPE 35
+#define STATE_LEASE 33
 
 using namespace std;
 
@@ -57,6 +65,11 @@ namespace std {
     }
 }
 
+struct dhcpOptions {
+    int type;
+    uint32_t lease;
+};
+
 struct udphdr {
     u_int16_t uh_sport;  /* source port */
     u_int16_t uh_dport;  /* destination port */
@@ -66,6 +79,7 @@ struct udphdr {
 
 struct device {
     string address;
+    time_t expire;
 };
 
 struct network {
@@ -82,9 +96,11 @@ void printStats();
 
 bool hasDeviceInNetwork(string deviceIp, network & myNetwork, int *index);
 
-void requestAck(const ip *my_ip);
+void requestAck(string deviceIp, dhcpOptions options);
 
 void removeDevice(const ip *my_ip);
+
+time_t getLeaseTime(const u_char *payload);
 
 int n = 0;
 int i = 0;
@@ -171,30 +187,73 @@ void mypcap_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
     }
 }
 
+
+dhcpOptions getOptions(const u_char *payload, int size_payload) {
+    int state = STATE_LOAD;
+    int i = DHCP_OPTIONS_START;
+    dhcpOptions options;
+    options.lease = 0;
+    options.type = 0;
+
+    while (i < size_payload) {
+        u_char actual = payload[i];
+
+        switch (state) {
+            case STATE_LOAD:
+                if (actual == DHCP_OPTION_TYPE) {
+                    state = STATE_TYPE;
+                    i += 2;
+                } else if (actual == DHCP_OPTION_LEASE) {
+                    state = STATE_LEASE;
+                    i += 2;
+                } else if (actual == DHCP_OPTION_END) {
+                    return options;
+                } else {
+                    i += payload[i + 1] + 2;
+                }
+
+                break;
+            case STATE_TYPE:
+                options.type = payload[i];
+                state = STATE_LOAD;
+                i++;
+                break;
+            case STATE_LEASE:
+                options.lease = (int) (payload[i] << 24 | payload[i + 1] << 16 | payload[i + 2] << 8 | payload[i + 3]);
+                state = STATE_LOAD;
+                i += 5;
+                break;
+        }
+    }
+
+    return options;
+}
+
 void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
     const struct udphdr *my_udp;
-    const char *payload;
+    const u_char *payload;
     int size_payload;
 
     my_udp = (struct udphdr *) (packet + SIZE_ETHERNET + size_ip);
-    payload = (char *) (packet + SIZE_ETHERNET + size_ip + SIZE_UDP);
+    payload = (u_char *) (packet + SIZE_ETHERNET + size_ip + SIZE_UDP);
     size_payload = ntohs(my_ip->ip_len) - (size_ip + SIZE_UDP);
 
     if (size_payload > ntohs(my_udp->uh_ulen)) {
         size_payload = ntohs(my_udp->uh_ulen);
     }
 
-    if (!size_payload || size_payload < DHCP_OPTION_TYPE) {
+    if (!size_payload || size_payload < DHCP_OPTIONS_START) {
         return;
     }
 
-    char type = payload[DHCP_OPTION_TYPE];
-    printf("Type: %d\n", type);
+    dhcpOptions options = getOptions(payload, size_payload);
 
-    switch (type) {
+    switch (options.type) {
         case DHCP_ACK:
+            requestAck(inet_ntoa(my_ip->ip_dst), options);
+            break;
         case DHCP_INFO:
-            requestAck(my_ip);
+            requestAck(inet_ntoa(my_ip->ip_src), options);
             break;
         case DHCP_DECLINE:
         case DHCP_NACK:
@@ -208,10 +267,10 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
     printStats();
 }
 
-void requestAck(const ip *my_ip) {
+void requestAck(string deviceIp, dhcpOptions options) {
     network *actual;
-    string deviceIp = inet_ntoa(my_ip->ip_dst);
     string deviceBits = ipToStringBits(deviceIp);
+    time_t leasTime = time(NULL) + options.lease;
 
     for ( auto &i : networks ) {
         if (!isInNetwork(deviceBits, i.bits, i.prefix)) {
@@ -224,8 +283,11 @@ void requestAck(const ip *my_ip) {
         if (!found) {
             device newDevice;
             newDevice.address = deviceIp;
+            newDevice.expire = leasTime;
 
             i.devices.push_back(newDevice);
+        } else {
+            i.devices.at(index).expire = leasTime;
         }
     }
 }
@@ -241,7 +303,7 @@ void removeDevice(const ip *my_ip) {
             continue;
         }
 
-        i.devices.erase(i.devices.begin() + index + 1);
+        i.devices.erase(i.devices.begin() + index);
     }
 }
 
@@ -249,7 +311,6 @@ bool hasDeviceInNetwork(string deviceIp, network & myNetwork, int *index) {
     *index = 0;
 
     for (auto &networkDevice : myNetwork.devices) {
-        cout << networkDevice.address << " == " << deviceIp << endl;
         if (networkDevice.address == deviceIp) {
             return true;
         }
@@ -260,7 +321,36 @@ bool hasDeviceInNetwork(string deviceIp, network & myNetwork, int *index) {
     return false;
 }
 
+void checkExpiration() {
+    time_t actualTime = time(NULL);
+    int index;
+
+    for (auto &network : networks ) {
+        index = 0;
+
+        for (auto &networkDevice : network.devices) {
+            if (networkDevice.expire < actualTime) {
+                network.devices.erase(network.devices.begin() + index);
+            }
+
+            index++;
+        }
+    }
+}
+
+void printTime(time_t time) {
+    struct tm * now = localtime( & time );
+    cout << (now->tm_year + 1900) << '-'
+         << (now->tm_mon + 1) << '-'
+         <<  now->tm_mday << " "
+         <<  now->tm_hour << ":"
+         <<  now->tm_min << ":"
+         <<  now->tm_sec;
+}
+
 void printStats() {
+    checkExpiration();
+
     cout << endl << "################################################################################" << endl;
 
     for ( auto &network : networks ) {
