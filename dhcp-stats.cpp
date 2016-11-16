@@ -354,7 +354,12 @@ void printStats() {
     cout << endl << "################################################################################" << endl;
 
     for ( auto &network : networks ) {
-        double max = pow(2, IP_LENGTH - network.prefix) - 2;
+        double max = pow(2, IP_LENGTH - network.prefix);
+
+        if (network.prefix < 31) {
+            max -= 2;
+        }
+
         cout << network.address << "/" << network.prefix;
         cout << "      ";
         cout << max;
@@ -391,8 +396,22 @@ bool parseParameters(int argc, char *argv[])
             return false;
         }
 
+        for (auto &octet : octets) {
+            int octetNumber = std::stoi(octet);
+
+            if (octetNumber < 0 || octetNumber > 255) {
+                return false;
+            }
+        }
+
+        int prefix = std::stoi(addressAndPrefix[1]);
+
+        if (prefix < 0 || prefix > 32) {
+            return false;
+        }
+
         network network;
-        network.prefix = std::stoi(addressAndPrefix[1]);
+        network.prefix = prefix;
         network.address = addressAndPrefix[0];
         network.bits = ipToStringBits(addressAndPrefix[0]);
 
