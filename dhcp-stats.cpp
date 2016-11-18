@@ -22,6 +22,8 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
+
 
 #ifdef __linux__            // for Linux
 #include <netinet/ether.h>
@@ -53,6 +55,11 @@
 #define STATE_LOAD 0
 #define STATE_TYPE 35
 #define STATE_LEASE 33
+
+#define OUTPUT_PREFIX_LENGTH 25
+#define OUTPUT_MAX_LENGTH 15
+#define OUTPUT_ALLOCATED_LENGTH 25
+#define OUTPUT_UTILIZATION_LENGTH 15
 
 using namespace std;
 
@@ -103,8 +110,8 @@ void removeDevice(const ip *my_ip);
 time_t getLeaseTime(const u_char *payload);
 
 int n = 0;
-int i = 0;
 std::vector<network> networks;
+bool headerPrinted = false;
 
 bool isInNetwork(string device, string network, int prefix)
 {
@@ -263,8 +270,6 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
         default:
             break;
     }
-
-    printStats();
 }
 
 void requestAck(string deviceIp, dhcpOptions options) {
@@ -290,6 +295,8 @@ void requestAck(string deviceIp, dhcpOptions options) {
             i.devices.at(index).expire = leasTime;
         }
     }
+
+    printStats();
 }
 
 void removeDevice(const ip *my_ip) {
@@ -305,6 +312,8 @@ void removeDevice(const ip *my_ip) {
 
         i.devices.erase(i.devices.begin() + index);
     }
+
+    printStats();
 }
 
 bool hasDeviceInNetwork(string deviceIp, network & myNetwork, int *index) {
@@ -348,10 +357,23 @@ void printTime(time_t time) {
          <<  now->tm_sec;
 }
 
+void printHeader()
+{
+    cout << left << setw(OUTPUT_PREFIX_LENGTH) << setfill(' ') << "IP Prefix";
+    cout << left << setw(OUTPUT_MAX_LENGTH) << setfill(' ') << "Max hosts";
+    cout << left << setw(OUTPUT_ALLOCATED_LENGTH) << setfill(' ') << "Allocated addresses";
+    cout << left << setw(OUTPUT_UTILIZATION_LENGTH) << setfill(' ') << "Utilization";
+    cout << endl;
+
+}
+
 void printStats() {
     checkExpiration();
 
-    cout << endl << "################################################################################" << endl;
+    if (!headerPrinted) {
+        printHeader();
+        headerPrinted = true;
+    }
 
     for ( auto &network : networks ) {
         double max = pow(2, IP_LENGTH - network.prefix);
@@ -360,21 +382,29 @@ void printStats() {
             max -= 2;
         }
 
-        cout << network.address << "/" << network.prefix;
-        cout << "      ";
-        cout << max;
-        cout << "      ";
-        cout << network.devices.size();
-        cout << "      ";
-        cout << 100 * network.devices.size() / max << " %";
+        string networkName("");
+        networkName.append(network.address);
+        networkName.append("/");
+        networkName.append(std::to_string(network.prefix));
+
+        string utilization("");
+        utilization.append(std::to_string(100 * network.devices.size() / max));
+        utilization.append("%");
+
+        cout << left << setw(OUTPUT_PREFIX_LENGTH) << setfill(' ') << networkName;
+        cout << left << setw(OUTPUT_MAX_LENGTH) << setfill(' ') << max;
+        cout << left << setw(OUTPUT_ALLOCATED_LENGTH) << setfill(' ') << network.devices.size();
+        cout << left << setw(OUTPUT_UTILIZATION_LENGTH) << setfill(' ') << utilization;
         cout << endl;
 
-        for (auto &networkDevice : network.devices) {
+        /*for (auto &networkDevice : network.devices) {
             cout << networkDevice.address << endl;
-        }
+        }*/
     }
 
-    cout  << "################################################################################" << endl << endl;
+    if (networks.size() > 0) {
+        cout << endl;
+    }
 }
 
 bool parseParameters(int argc, char *argv[])
@@ -432,11 +462,9 @@ int main (int argc, char * argv[])
     struct bpf_program fp;          // the compiled filter
 
     if (!parseParameters(argc, argv)) {
-        cout << "spatne parametry" << endl;
+        cout << "Bad parameters!" << endl;
         return EXIT_FAILURE;
     };
-
-    printStats();
 
     // open the device to sniff data
     if ((dev = pcap_lookupdev(errbuf)) == NULL)
@@ -447,9 +475,9 @@ int main (int argc, char * argv[])
         err(1,"pcap_lookupnet() failed");
 
     a.s_addr=netaddr;
-    printf("Opening interface \"%s\" with net network %s,",dev,inet_ntoa(a));
+    //printf("Opening interface \"%s\" with net network %s,",dev,inet_ntoa(a));
     b.s_addr=mask;
-    printf("mask %s for listening...\n",inet_ntoa(b));
+    //printf("mask %s for listening...\n",inet_ntoa(b));
 
     // open the interface for live sniffing
     if ((handle = pcap_open_live(dev,BUFSIZ,1,1000,errbuf)) == NULL)
@@ -467,6 +495,7 @@ int main (int argc, char * argv[])
     // incoming packets are processed by function mypcap_handler()
     if (pcap_loop(handle,-1,mypcap_handler,NULL) == -1)
         err(1,"pcap_loop() failed");
+
 
     // close the capture device and deallocate resources
     pcap_close(handle);
