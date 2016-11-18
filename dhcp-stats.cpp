@@ -96,18 +96,86 @@ struct network {
     std::vector<device> devices;
 };
 
-
+/**
+ * Analyze packet header and decide what to with DHCP Data
+ */
 void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip);
 
-void printStats();
-
+/**
+ * Check if device exist in network structure
+ */
 bool hasDeviceInNetwork(string deviceIp, network & myNetwork, int *index);
 
-void requestAck(string deviceIp, dhcpOptions options);
+/**
+ *
+ * Add device to network structure
+ */
+void addDevice(string deviceIp, dhcpOptions options);
 
+/**
+ * Remove device from network structure
+ */
 void removeDevice(const ip *my_ip);
 
-time_t getLeaseTime(const u_char *payload);
+/**
+ * Check if the device is in network with specific prefix
+ */
+bool isInNetwork(string device, string network, int prefix);
+
+/**
+ * Split string by delimiter into vector of strings
+ */
+vector<string> split(string input,const char* delimiter);
+
+/**
+ * Check if the given string contains only digits
+ */
+bool isNumber(const std::string& s);
+
+/**
+ * Convert integer to string with bit representation
+ */
+string intToStringBits(int number);
+
+/**
+ * Convert given ip address to bit representation
+ */
+string ipToStringBits(string input);
+
+/**
+ * Handler of pcap library, catch packet
+ */
+void mypcapHandler(u_char *args, const struct pcap_pkthdr *header, const u_char *packet);
+
+/**
+ * Get options from DHCP options data
+ */
+dhcpOptions getOptions(const u_char *payload, int size_payload);
+
+/**
+ * Check experiation of leastime for device, and if it expiry then remove device from network structure
+ */
+void checkExpiration();
+
+/**
+ * Find index of specific parameter
+ */
+int findParam(int argc, char * argv[], string find);
+
+/**
+ * Find value of parameter on given index
+ */
+string foundValue(int argc, char * argv[], int pos);
+
+/**
+ * Parse and check all parameters
+ */
+bool parseParameters(int argc, char *argv[]);
+
+/**
+ * Print statistics
+ */
+void printStats();
 
 int n = 0;
 std::vector<network> networks;
@@ -125,20 +193,31 @@ bool isInNetwork(string device, string network, int prefix)
     return true;
 }
 
-vector<string> split(string input,const char* delimeter)
+vector<string> split(string input,const char* delimiter)
 {
     char data[input.length() + 1];
     memcpy(data, input.c_str(), input.length() + 1);
-    char* token = strtok(data, delimeter);
+    char* token = strtok(data, delimiter);
     vector<string> result;
 
     while(token != NULL)
     {
         result.push_back(token);
-        token = strtok(NULL,delimeter);
+        token = strtok(NULL,delimiter);
     }
 
     return result;
+}
+
+bool isNumber(const std::string& s)
+{
+    std::string::const_iterator i = s.begin();
+
+    while (i != s.end() && std::isdigit(*i)) {
+        i++;
+    }
+
+    return !s.empty() && i == s.end();
 }
 
 string intToStringBits(int number)
@@ -173,7 +252,7 @@ string ipToStringBits(string input)
     return ipBytes;
 }
 
-void mypcap_handler(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
+void mypcapHandler(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
     struct ip *my_ip;               // pointer to the beginning of IP header
     struct ether_header *eptr;      // pointer to the beginning of Ethernet header
@@ -194,7 +273,6 @@ void mypcap_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
         }
     }
 }
-
 
 dhcpOptions getOptions(const u_char *payload, int size_payload) {
     int state = STATE_LOAD;
@@ -258,10 +336,10 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
 
     switch (options.type) {
         case DHCP_ACK:
-            requestAck(inet_ntoa(my_ip->ip_dst), options);
+            addDevice(inet_ntoa(my_ip->ip_dst), options);
             break;
         case DHCP_INFO:
-            requestAck(inet_ntoa(my_ip->ip_src), options);
+            addDevice(inet_ntoa(my_ip->ip_src), options);
             break;
         case DHCP_DECLINE:
         case DHCP_NACK:
@@ -273,7 +351,7 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
     }
 }
 
-void requestAck(string deviceIp, dhcpOptions options) {
+void addDevice(string deviceIp, dhcpOptions options) {
     network *actual;
     string deviceBits = ipToStringBits(deviceIp);
     time_t leasTime = time(NULL) + options.lease;
@@ -346,16 +424,6 @@ void checkExpiration() {
             index++;
         }
     }
-}
-
-void printTime(time_t time) {
-    struct tm * now = localtime( & time );
-    cout << (now->tm_year + 1900) << '-'
-         << (now->tm_mon + 1) << '-'
-         <<  now->tm_mday << " "
-         <<  now->tm_hour << ":"
-         <<  now->tm_min << ":"
-         <<  now->tm_sec;
 }
 
 void printHeader()
@@ -465,11 +533,19 @@ bool parseParameters(int argc, char *argv[])
         }
 
         for (auto &octet : octets) {
+            if (!isNumber(octet)) {
+                return false;
+            }
+
             int octetNumber = std::stoi(octet);
 
             if (octetNumber < 0 || octetNumber > 255) {
                 return false;
             }
+        }
+
+        if (!isNumber(addressAndPrefix[1])) {
+            return false;
         }
 
         int prefix = std::stoi(addressAndPrefix[1]);
@@ -534,8 +610,8 @@ int main (int argc, char * argv[])
     }
 
     // read packets from the interface in the infinite loop (count == -1)
-    // incoming packets are processed by function mypcap_handler()
-    if (pcap_loop(handle, -1, mypcap_handler, NULL) == -1) {
+    // incoming packets are processed by function mypcapHandler()
+    if (pcap_loop(handle, -1, mypcapHandler, NULL) == -1) {
         cerr << "pcap_loop() failed" << endl;
         return EXIT_FAILURE;
     }
