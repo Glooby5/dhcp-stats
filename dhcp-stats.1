@@ -1,0 +1,18 @@
+.\" Manpage for nuseradd.
+.\" Contact vivek@nixcraft.net.in to correct errors or typos.
+.TH man 1 "20 November 2016" "1.0" "dhcp-stats"
+.SH NAME
+dhcp-stats \- monitor DHCP clients on DHCP server
+.SH SYNOPSIS
+dhcp-stats -i <interface> <networks...>
+.SH DESCRIPTION
+dhcp-stats is a application, which should help network adminstrators to get statistics about how much are the given networks utilized.
+.SH OPTIONS
+
+ -i Identifier of interface where application should listen.
+.SH EXAMPLES
+The following is how to monitor DHCP clients on interface "eth1" in network "192.168.1.0/24" and "192.168.0.0/22"
+
+ ./dhcp-stats -i eth1 192.168.1.0/24 192.168.0.0/22
+.SH AUTHOR
+Jan Kaderabek (xkader13@fit.vutbr.cz)
