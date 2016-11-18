@@ -112,6 +112,7 @@ time_t getLeaseTime(const u_char *payload);
 int n = 0;
 std::vector<network> networks;
 bool headerPrinted = false;
+string interface("");
 
 bool isInNetwork(string device, string network, int prefix)
 {
@@ -407,13 +408,50 @@ void printStats() {
     }
 }
 
+int findParam(int argc, char * argv[], string find)
+{
+    for (int i = 1; i < argc; i++) {
+        if (argv[i] == find) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+string foundValue(int argc, char * argv[], int pos)
+{
+    if (pos + 2 > argc) {
+        return string("");
+    }
+
+    return argv[pos + 1];
+}
+
 bool parseParameters(int argc, char *argv[])
 {
-    if (argc < 2) {
+    if (argc < 3) {
+        return false;
+    }
+
+    int interfacePosition = findParam(argc, argv, "-i");
+
+    if (interfacePosition < 0) {
+        return false;
+    }
+
+    interface = foundValue(argc, argv, interfacePosition);
+
+    if (interface.empty()) {
         return false;
     }
 
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-i") == 0) {
+            i++;
+            continue;
+        }
+
         vector<string> addressAndPrefix = split(argv[i], "/");
 
         if (addressAndPrefix.size() != 2) {
@@ -462,42 +500,48 @@ int main (int argc, char * argv[])
     struct bpf_program fp;          // the compiled filter
 
     if (!parseParameters(argc, argv)) {
-        cout << "Bad parameters!" << endl;
+        cerr << "Bad parameters!" << endl;
         return EXIT_FAILURE;
     };
 
-    // open the device to sniff data
-    if ((dev = pcap_lookupdev(errbuf)) == NULL)
-        err(1,"Can't open input device");
+    dev = (char *)interface.c_str();
 
     // get IP network and mask of the sniffing interface
-    if (pcap_lookupnet(dev,&netaddr,&mask,errbuf) == -1)
-        err(1,"pcap_lookupnet() failed");
+    if (pcap_lookupnet(dev,&netaddr,&mask,errbuf) == -1) {
+        cerr << "Bad interface" << endl;
+        return EXIT_FAILURE;
+    }
 
     a.s_addr=netaddr;
-    //printf("Opening interface \"%s\" with net network %s,",dev,inet_ntoa(a));
     b.s_addr=mask;
-    //printf("mask %s for listening...\n",inet_ntoa(b));
 
     // open the interface for live sniffing
-    if ((handle = pcap_open_live(dev,BUFSIZ,1,1000,errbuf)) == NULL)
-        err(1,"pcap_open_live() failed");
+    if ((handle = pcap_open_live(dev, BUFSIZ, 1, 1000, errbuf)) == NULL) {
+        cerr << "pcap_open_live() failed" << endl;
+        return EXIT_FAILURE;
+    }
 
     // compile the filter
-    if (pcap_compile(handle,&fp,"port 67",0,netaddr) == -1)
-        err(1,"pcap_compile() failed");
+    if (pcap_compile(handle, &fp, "port 67 or port 68", 0, netaddr) == -1) {
+        cerr << "pcap_compile() failed" << endl;
+        return EXIT_FAILURE;
+    }
 
     // set the filter to the packet capture handle
-    if (pcap_setfilter(handle,&fp) == -1)
-        err(1,"pcap_setfilter() failed");
+    if (pcap_setfilter(handle, &fp) == -1) {
+        cerr << "pcap_setfilter() failed" << endl;
+        return EXIT_FAILURE;
+    }
 
     // read packets from the interface in the infinite loop (count == -1)
     // incoming packets are processed by function mypcap_handler()
-    if (pcap_loop(handle,-1,mypcap_handler,NULL) == -1)
-        err(1,"pcap_loop() failed");
-
+    if (pcap_loop(handle, -1, mypcap_handler, NULL) == -1) {
+        cerr << "pcap_loop() failed" << endl;
+        return EXIT_FAILURE;
+    }
 
     // close the capture device and deallocate resources
     pcap_close(handle);
-    return 0;
+
+    return EXIT_SUCCESS;
 }
