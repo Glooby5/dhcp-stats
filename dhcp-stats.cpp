@@ -179,7 +179,6 @@ void printStats();
 
 int n = 0;
 std::vector<network> networks;
-bool headerPrinted = false;
 string interface("");
 
 bool isInNetwork(string device, string network, int prefix)
@@ -339,7 +338,6 @@ void analyzePacket(const u_char *packet, const ip *my_ip, u_int size_ip) {
             addDevice(inet_ntoa(my_ip->ip_dst), options);
             break;
         case DHCP_INFO:
-            addDevice(inet_ntoa(my_ip->ip_src), options);
             break;
         case DHCP_DECLINE:
         case DHCP_NACK:
@@ -439,11 +437,6 @@ void printHeader()
 void printStats() {
     checkExpiration();
 
-    if (!headerPrinted) {
-        printHeader();
-        headerPrinted = true;
-    }
-
     for ( auto &network : networks ) {
         double max = pow(2, IP_LENGTH - network.prefix);
 
@@ -465,10 +458,6 @@ void printStats() {
         cout << left << setw(OUTPUT_ALLOCATED_LENGTH) << setfill(' ') << network.devices.size();
         cout << left << setw(OUTPUT_UTILIZATION_LENGTH) << setfill(' ') << utilization;
         cout << endl;
-
-        /*for (auto &networkDevice : network.devices) {
-            cout << networkDevice.address << endl;
-        }*/
     }
 
     if (networks.size() > 0) {
@@ -608,6 +597,8 @@ int main (int argc, char * argv[])
         cerr << "pcap_setfilter() failed" << endl;
         return EXIT_FAILURE;
     }
+
+    printHeader();
 
     // read packets from the interface in the infinite loop (count == -1)
     // incoming packets are processed by function mypcapHandler()
