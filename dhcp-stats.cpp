@@ -551,7 +551,8 @@ bool parseParameters(int argc, char *argv[])
         networks.push_back(network);
     }
 
-    return true;
+    return networks.size() != 0;
+
 }
 
 int main (int argc, char * argv[])
@@ -568,6 +569,8 @@ int main (int argc, char * argv[])
         cerr << "Bad parameters!" << endl;
         return EXIT_FAILURE;
     };
+
+    printStats();
 
     dev = (char *)interface.c_str();
 
