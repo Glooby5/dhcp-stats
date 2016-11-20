@@ -7,11 +7,12 @@ Monitorování DHCP komunikace
 - `Makefile`
 
 ## Kompilace
-- příkaz `make` je nutné spustit s právy superusera (kopíruje manuálovou stránku do oobecné složky)
+- příkaz `make` je nutné spustit s právy superusera (kopíruje manuálovou stránku do obecné systémové složky)
 
 ## Spuštění
 - spouštět s právy superuser
 - je nutné zadat interface na kterém se bude odposlouchávat pomocí přepínače `-i`
+- například `./dhcp-stats -i eth1 192.168.1.0/24 192.168.0.0/22`
 
 ## Zdrojový kód
 - aplikace využívá knihovny pcap
