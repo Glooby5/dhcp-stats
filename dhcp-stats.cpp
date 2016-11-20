@@ -570,8 +570,6 @@ int main (int argc, char * argv[])
         return EXIT_FAILURE;
     };
 
-    printStats();
-
     dev = (char *)interface.c_str();
 
     // get IP network and mask of the sniffing interface
