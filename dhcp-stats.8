@@ -1,12 +1,18 @@
 .\" Manpage for nuseradd.
 .\" Contact vivek@nixcraft.net.in to correct errors or typos.
-.TH man 1 "20 November 2016" "1.0" "dhcp-stats"
+.TH man 8 "20 November 2016" "1.0" "dhcp-stats"
 .SH NAME
 dhcp-stats \- monitor DHCP clients on DHCP server
 .SH SYNOPSIS
 dhcp-stats -i <interface> <networks...>
 .SH DESCRIPTION
-dhcp-stats is a application, which should help network adminstrators to get statistics about how much are the given networks utilized.
+This is application, which should help network adminstrators to get statistics about how much are the given networks utilized.
+
+Application add device to statistics, when DHCP server send DHCP ACK packet or when client send DHCP Inform. When the device send DHCP Release, every records whith this device in statistics are deleted.
+
+Application print output everytime when catch some DHCP packet.
+
+To run the application you must have superuser rights.
 .SH OPTIONS
 
  -i Identifier of interface where application should listen.

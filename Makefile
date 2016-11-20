@@ -10,6 +10,7 @@ PROGS=$(patsubst %.cpp,%,$(SRC))
 	$(GCC) -std=c++11 $(CFLAGS+) $< $(LIBS) -o $@
 
 all: $(PROGS)
+	sudo cp dhcp-stats.8 /usr/local/share/man/man8
 
 clean:
 	rm -f *.core $(PROGS) *~
